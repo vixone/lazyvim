@@ -86,7 +86,10 @@ config.window_padding = {
   bottom = 8,
 }
 
-config.window_background_opacity = 1.0
+-- Transparency settings
+config.window_background_opacity = 0.93
+config.macos_window_background_blur = 20
+
 config.enable_scroll_bar = false
 config.use_fancy_tab_bar = false
 config.hide_tab_bar_if_only_one_tab = true
@@ -263,6 +266,27 @@ config.keys = {
   -- ─── ZOOM PANE ───────────────────────────────────────────────────
   {
     key = 'z',
+    mods = 'CMD',
+    action = act.TogglePaneZoomState,
+  },
+
+  -- ─── TAB RENAME ──────────────────────────────────────────────────
+  {
+    key = 'r',
+    mods = 'CMD|SHIFT',
+    action = act.PromptInputLine {
+      description = 'Enter new name for tab',
+      action = wezterm.action_callback(function(window, pane, line)
+        if line then
+          window:active_tab():set_title(line)
+        end
+      end),
+    },
+  },
+
+  -- ─── PANE FULLSCREEN ─────────────────────────────────────────────
+  {
+    key = 'f',
     mods = 'CMD',
     action = act.TogglePaneZoomState,
   },
