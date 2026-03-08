@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(start:specify-plan)",
+      "Skill(start:specify-requirements)",
+      "Bash(kitty:*)",
+      "Skill(start:specify-solution)",
+      "Bash(fzf:*)",
+      "WebSearch",
+      "Bash(gh api:*)",
+      "Bash(gh repo:*)",
+      "Bash(gh auth:*)",
+      "Bash(python3:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(kitten @:*)",
+      "Skill(start:implement)",
+      "Read(//private/tmp/**)",
+      "Bash(bash:*)"
+    ]
+  }
+}
