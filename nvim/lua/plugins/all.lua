@@ -1,4 +1,24 @@
 return {
+  -- Catppuccin colorscheme (Mocha dark / Latte light)
+  {
+    "catppuccin/nvim",
+    name = "catppuccin",
+    priority = 1000,
+    opts = {
+      transparent_background = true,
+      background = {
+        light = "latte",
+        dark = "mocha",
+      },
+    },
+  },
+  {
+    "LazyVim/LazyVim",
+    opts = {
+      colorscheme = "catppuccin",
+    },
+  },
+
   -- navigate lsp suggest with tab
   {
     "saghen/blink.cmp",
@@ -75,6 +95,9 @@ return {
       { "<C-l>", function() require("smart-splits").move_cursor_right() end, desc = "Move to right split/pane" },
     },
   },
+
+  -- Disable bufferline tab bar — use <leader>b for buffer switching
+  { "akinsho/bufferline.nvim", enabled = false },
 
   -- Lazygit
   {

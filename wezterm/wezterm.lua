@@ -11,73 +11,115 @@ if wezterm.config_builder then
 	config = wezterm.config_builder()
 end
 
+-- ─── THEME MODE ───────────────────────────────────────────────────
+-- Reads ~/.config/wezterm/theme-mode ("dark" or "light")
+-- Toggle with: toggle-theme (shell) or CMD+SHIFT+T (keybinding)
+local theme_file = wezterm.config_dir .. "/theme-mode"
+
+local function read_theme_mode()
+	local f = io.open(theme_file, "r")
+	if not f then
+		return "dark"
+	end
+	local mode = f:read("*l")
+	f:close()
+	return (mode and mode:match("light")) and "light" or "dark"
+end
+
+local mode = read_theme_mode()
+
+-- Catppuccin Mocha (dark) / Latte (light)
+local themes = {
+	dark = {
+		colors = {
+			foreground = "#cdd6f4", -- Text
+			background = "#1e1e2e", -- Base
+			cursor_bg = "#f5e0dc", -- Rosewater
+			cursor_fg = "#1e1e2e", -- Base
+			cursor_border = "#f5e0dc", -- Rosewater
+			selection_bg = "#585b70", -- Surface2
+			selection_fg = "#cdd6f4", -- Text
+			tab_bar = {
+				background = "#181825", -- Mantle
+				active_tab = { bg_color = "#cba6f7", fg_color = "#181825", intensity = "Bold" }, -- Mauve
+				inactive_tab = { bg_color = "#1e1e2e", fg_color = "#6c7086" }, -- Base, Overlay0
+				inactive_tab_hover = { bg_color = "#313244", fg_color = "#cdd6f4" }, -- Surface0, Text
+				new_tab = { bg_color = "#1e1e2e", fg_color = "#6c7086" },
+				new_tab_hover = { bg_color = "#313244", fg_color = "#cdd6f4" },
+			},
+			ansi = {
+				"#45475a", -- Surface1 (black)
+				"#f38ba8", -- Red
+				"#a6e3a1", -- Green
+				"#f9e2af", -- Yellow
+				"#89b4fa", -- Blue
+				"#f5c2e7", -- Pink (magenta)
+				"#94e2d5", -- Teal (cyan)
+				"#bac2de", -- Subtext1 (white)
+			},
+			brights = {
+				"#585b70", -- Surface2 (bright black)
+				"#f38ba8", -- Red
+				"#a6e3a1", -- Green
+				"#f9e2af", -- Yellow
+				"#89b4fa", -- Blue
+				"#f5c2e7", -- Pink
+				"#94e2d5", -- Teal
+				"#a6adc8", -- Subtext0 (bright white)
+			},
+		},
+		hints = { key = "#89b4fa", label = "#6c7086", sep = "#45475a" }, -- Blue, Overlay0, Surface1
+	},
+	light = {
+		colors = {
+			foreground = "#4c4f69", -- Text
+			background = "#eff1f5", -- Base
+			cursor_bg = "#dc8a78", -- Rosewater
+			cursor_fg = "#eff1f5", -- Base
+			cursor_border = "#dc8a78", -- Rosewater
+			selection_bg = "#acb0be", -- Surface2
+			selection_fg = "#4c4f69", -- Text
+			tab_bar = {
+				background = "#e6e9ef", -- Mantle
+				active_tab = { bg_color = "#8839ef", fg_color = "#e6e9ef", intensity = "Bold" }, -- Mauve
+				inactive_tab = { bg_color = "#eff1f5", fg_color = "#9ca0b0" }, -- Base, Overlay0
+				inactive_tab_hover = { bg_color = "#ccd0da", fg_color = "#4c4f69" }, -- Surface0, Text
+				new_tab = { bg_color = "#eff1f5", fg_color = "#9ca0b0" },
+				new_tab_hover = { bg_color = "#ccd0da", fg_color = "#4c4f69" },
+			},
+			ansi = {
+				"#bcc0cc", -- Surface1 (black)
+				"#d20f39", -- Red
+				"#40a02b", -- Green
+				"#df8e1d", -- Yellow
+				"#1e66f5", -- Blue
+				"#ea76cb", -- Pink (magenta)
+				"#179299", -- Teal (cyan)
+				"#5c5f77", -- Subtext1 (white)
+			},
+			brights = {
+				"#acb0be", -- Surface2 (bright black)
+				"#d20f39", -- Red
+				"#40a02b", -- Green
+				"#df8e1d", -- Yellow
+				"#1e66f5", -- Blue
+				"#ea76cb", -- Pink
+				"#179299", -- Teal
+				"#6c6f85", -- Subtext0 (bright white)
+			},
+		},
+		hints = { key = "#1e66f5", label = "#9ca0b0", sep = "#bcc0cc" }, -- Blue, Overlay0, Surface1
+	},
+}
+
+local theme = themes[mode]
+
 -- ─── FONTS ─────────────────────────────────────────────────────────
 config.font = wezterm.font("RobotoMono Nerd Font Mono")
 config.font_size = 16.0
 
 -- ─── APPEARANCE ────────────────────────────────────────────────────
--- Tokyonight Moon theme (matched to kitty theme.conf)
-config.colors = {
-	foreground = "#c0caf5",
-	background = "#222436",
-
-	cursor_bg = "#c0caf5",
-	cursor_fg = "#222436",
-	cursor_border = "#c0caf5",
-
-	selection_bg = "#283457",
-	selection_fg = "#c0caf5",
-
-	-- Tab bar colors
-	tab_bar = {
-		background = "#1e2030",
-		active_tab = {
-			bg_color = "#7aa2f7",
-			fg_color = "#222436",
-			intensity = "Bold",
-		},
-		inactive_tab = {
-			bg_color = "#222436",
-			fg_color = "#565f89",
-		},
-		inactive_tab_hover = {
-			bg_color = "#414868",
-			fg_color = "#c0caf5",
-		},
-		new_tab = {
-			bg_color = "#222436",
-			fg_color = "#565f89",
-		},
-		new_tab_hover = {
-			bg_color = "#414868",
-			fg_color = "#c0caf5",
-		},
-	},
-
-	-- ANSI colors (normal)
-	ansi = {
-		"#15161e", -- black
-		"#f7768e", -- red
-		"#9ece6a", -- green
-		"#e0af68", -- yellow
-		"#7aa2f7", -- blue
-		"#bb9af7", -- magenta
-		"#7dcfff", -- cyan
-		"#a9b1d6", -- white
-	},
-
-	-- ANSI colors (bright)
-	brights = {
-		"#414868", -- bright black
-		"#f7768e", -- bright red
-		"#9ece6a", -- bright green
-		"#e0af68", -- bright yellow
-		"#7aa2f7", -- bright blue
-		"#bb9af7", -- bright magenta
-		"#7dcfff", -- bright cyan
-		"#c0caf5", -- bright white
-	},
-}
+config.colors = theme.colors
 
 -- ─── WINDOW ────────────────────────────────────────────────────────
 config.window_padding = {
@@ -91,6 +133,7 @@ config.window_padding = {
 config.window_background_opacity = 0.93
 config.macos_window_background_blur = 20
 
+config.window_decorations = "RESIZE"
 config.enable_scroll_bar = false
 config.use_fancy_tab_bar = false
 config.hide_tab_bar_if_only_one_tab = false
@@ -166,13 +209,6 @@ config.keys = {
 		key = "d",
 		mods = "CMD",
 		action = act.SplitHorizontal({ domain = "CurrentPaneDomain" }),
-	},
-
-	-- Split horizontal (ctrl+cmd+d)
-	{
-		key = "d",
-		mods = "CTRL|CMD",
-		action = act.SplitVertical({ domain = "CurrentPaneDomain" }),
 	},
 
 	-- Close pane (cmd+w)
@@ -273,11 +309,11 @@ config.keys = {
 		}),
 	},
 
-	-- ─── PANE FULLSCREEN ─────────────────────────────────────────────
+	-- ─── SPLIT HORIZONTAL (cmd+f) ───────────────────────────────────
 	{
 		key = "f",
 		mods = "CMD",
-		action = act.TogglePaneZoomState,
+		action = act.SplitVertical({ domain = "CurrentPaneDomain" }),
 	},
 
 	-- ─── FULLSCREEN TOGGLE (cmd+enter) ──────────────────────────────
@@ -287,12 +323,40 @@ config.keys = {
 		action = act.ToggleFullScreen,
 	},
 
-	-- ─── DEBUG TEST (delete after debug) ─────────────────────────────
-	-- Cmd+Shift+P = spawn new tab (simple built-in action test)
+	-- ─── DAILY NOTES (cmd+shift+n) ──────────────────────────────────
+	-- Opens today's daily note in a new tab via nvim + obsidian vault
+	-- Uses login shell to ensure full PATH (homebrew, etc.) is available
 	{
-		key = "p",
+		key = "n",
 		mods = "CMD|SHIFT",
-		action = act.SpawnTab("CurrentPaneDomain"),
+		action = act.SplitVertical({
+			args = { "/bin/zsh", "-l", "-c", os.getenv("HOME") .. "/obsidian-notes/open-daily-note.sh" },
+		}),
+	},
+
+	-- ─── THEME TOGGLE (cmd+shift+t) ─────────────────────────────────
+	-- Toggles dark/light mode for WezTerm (+ nvim picks it up via file watcher)
+	{
+		key = "t",
+		mods = "CMD|SHIFT",
+		action = wezterm.action_callback(function(window, pane)
+			local f = io.open(theme_file, "r")
+			local current = f and f:read("*l") or "dark"
+			if f then
+				f:close()
+			end
+
+			local new_mode = (current and current:match("light")) and "dark" or "light"
+
+			f = io.open(theme_file, "w")
+			if f then
+				f:write(new_mode .. "\n")
+				f:close()
+			end
+
+			-- Touch config file to trigger WezTerm reload
+			wezterm.run_child_process({ "/usr/bin/touch", wezterm.config_file })
+		end),
 	},
 }
 
@@ -310,23 +374,22 @@ wezterm.on("update-status", function(window, pane)
 
 	-- Shortcut hints (Zellij-style)
 	local hints = {
-		{ key = "⌘F", label = "ZoomPane" },
+		{ key = "⌘F", label = "Split↓" },
 		{ key = "^⌘R", label = "RenameTab" },
+		{ key = "⇧⌘N", label = "DailyNote↓" },
+		{ key = "⇧⌘T", label = "Theme" },
 	}
 
-	local key_fg = "#7aa2f7" -- blue - keys
-	local label_fg = "#565f89" -- dim - labels
-	local sep_fg = "#414868" -- dimmer - separators
-
+	local h = theme.hints
 	local elements = {}
 	for i, hint in ipairs(hints) do
 		if i > 1 then
-			table.insert(elements, { Foreground = { Color = sep_fg } })
+			table.insert(elements, { Foreground = { Color = h.sep } })
 			table.insert(elements, { Text = " │ " })
 		end
-		table.insert(elements, { Foreground = { Color = key_fg } })
+		table.insert(elements, { Foreground = { Color = h.key } })
 		table.insert(elements, { Text = hint.key })
-		table.insert(elements, { Foreground = { Color = label_fg } })
+		table.insert(elements, { Foreground = { Color = h.label } })
 		table.insert(elements, { Text = " " .. hint.label })
 	end
 
