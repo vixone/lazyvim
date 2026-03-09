@@ -94,7 +94,7 @@ config.macos_window_background_blur = 20
 config.enable_scroll_bar = false
 config.use_fancy_tab_bar = false
 config.hide_tab_bar_if_only_one_tab = false
-config.tab_bar_at_bottom = true
+config.tab_bar_at_bottom = false
 
 -- Tab title formatting (similar to kitty's tab_title_template)
 config.tab_max_width = 32
@@ -151,6 +151,13 @@ config.keys = {
 		key = "l",
 		mods = "OPT",
 		action = act.ActivateTabRelative(1),
+	},
+
+	-- Clear terminal (ctrl+cmd+l) since ctrl+l is used by smart-splits
+	{
+		key = "l",
+		mods = "CTRL|CMD",
+		action = act.ClearScrollback("ScrollbackAndViewport"),
 	},
 
 	-- ─── PANE (SPLIT) MANAGEMENT ─────────────────────────────────────
