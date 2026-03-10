@@ -1,0 +1,7 @@
+# Relaxed rules for daily notes - quick capture, not strict formatting
+MD009: false  # Allow trailing spaces (daily notes, quick capture)
+MD012: false  # Allow multiple blank lines
+MD013: false  # Don't enforce line length
+MD022: false  # Don't enforce blanks around headings
+MD032: false  # Don't enforce blanks around lists
+MD041: false  # Don't require first line to be h1
