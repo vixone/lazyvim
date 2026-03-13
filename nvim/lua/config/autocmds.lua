@@ -50,3 +50,26 @@ local function watch_theme()
   end
 end
 watch_theme()
+
+-- ─── UNCHECKED IDEAS SYNC ──────────────────────────────────────────
+-- When Unchecked-Ideas.md is saved, sync checked items back to source notes
+vim.api.nvim_create_autocmd("BufWritePost", {
+  group = vim.api.nvim_create_augroup("unchecked_ideas_sync", { clear = true }),
+  pattern = "*/obsidian-notes/Unchecked-Ideas.md",
+  callback = function()
+    -- Run sync script in background
+    vim.fn.jobstart(vim.fn.expand("~/obsidian-notes/sync-checked-ideas.sh"), {
+      on_exit = function(_, exit_code)
+        if exit_code == 0 then
+          -- Regenerate the ideas note to remove checked items
+          vim.fn.jobstart(vim.fn.expand("~/obsidian-notes/generate-unchecked-ideas.sh"), {
+            on_exit = function()
+              -- Reload the buffer to show updated list
+              vim.cmd("checktime")
+            end,
+          })
+        end
+      end,
+    })
+  end,
+})

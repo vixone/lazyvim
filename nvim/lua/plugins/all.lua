@@ -56,17 +56,15 @@ return {
     },
   },
 
-  -- Snacks explorer: use cwd instead of project root
+  -- Disable Snacks explorer (replaced by mini-files)
   {
     "folke/snacks.nvim",
     keys = {
-      {
-        "<leader>e",
-        function()
-          Snacks.explorer.open({ cwd = vim.fn.getcwd() })
-        end,
-        desc = "Explorer (cwd)",
-      },
+      { "<leader>e", false }, -- remove Snacks explorer binding (use mini.files instead)
+      { "<leader>E", false }, -- remove Snacks explorer cwd binding
+    },
+    opts = {
+      explorer = { enabled = false },
     },
   },
 

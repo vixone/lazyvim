@@ -211,18 +211,53 @@ config.keys = {
 		action = act.SplitHorizontal({ domain = "CurrentPaneDomain" }),
 	},
 
-	-- Close pane (cmd+w)
+	-- Close pane (cmd+w) — on locked tabs, allow closing panes but protect the last one
 	{
 		key = "w",
 		mods = "CMD",
-		action = act.CloseCurrentPane({ confirm = false }),
+		action = wezterm.action_callback(function(window, pane)
+			local tab = window:active_tab()
+			local locked_tabs = wezterm.GLOBAL.locked_tabs or {}
+			local is_locked = locked_tabs[tostring(tab:tab_id())]
+			if is_locked and #tab:panes() <= 1 then
+				-- Last pane — closing it would kill the locked tab
+				return
+			end
+			window:perform_action(act.CloseCurrentPane({ confirm = false }), pane)
+		end),
 	},
 
-	-- Close tab (cmd+shift+w)
+	-- Close tab (cmd+shift+w) — guarded by tab lock
 	{
 		key = "w",
 		mods = "CMD|SHIFT",
-		action = act.CloseCurrentTab({ confirm = false }),
+		action = wezterm.action_callback(function(window, pane)
+			local locked_tabs = wezterm.GLOBAL.locked_tabs or {}
+			local tab_id = tostring(window:active_tab():tab_id())
+			if locked_tabs[tab_id] then
+				window:toast_notification("Tab Locked", "Unlock first with CMD+SHIFT+L", nil, 3000)
+				return
+			end
+			window:perform_action(act.CloseCurrentTab({ confirm = false }), pane)
+		end),
+	},
+
+	-- ─── TAB LOCK (cmd+shift+l) ─────────────────────────────────────
+	-- Toggle lock on current tab to prevent accidental CMD+W / CMD+SHIFT+W closure
+	{
+		key = "l",
+		mods = "CMD|SHIFT",
+		action = wezterm.action_callback(function(window, pane)
+			wezterm.GLOBAL.locked_tabs = wezterm.GLOBAL.locked_tabs or {}
+			local tab_id = tostring(window:active_tab():tab_id())
+			if wezterm.GLOBAL.locked_tabs[tab_id] then
+				wezterm.GLOBAL.locked_tabs[tab_id] = nil
+				window:toast_notification("Tab Unlocked", "Tab can now be closed normally.", nil, 2000)
+			else
+				wezterm.GLOBAL.locked_tabs[tab_id] = true
+				window:toast_notification("Tab Locked", "Tab protected from CMD+W / CMD+SHIFT+W.", nil, 2000)
+			end
+		end),
 	},
 
 	-- ─── PANE NAVIGATION (ctrl+hjkl) ─────────────────────────────────
@@ -251,11 +286,11 @@ config.keys = {
 	},
 
 	-- ─── CLIPBOARD ───────────────────────────────────────────────────
-	-- Paste screenshot from clipboard (ctrl+period)
+	-- Paste screenshot from clipboard (CMD+SHIFT+V)
 	-- Extracts image from clipboard and saves to /tmp/screenshot_TIMESTAMP.png
 	{
-		key = ".",
-		mods = "CTRL",
+		key = "v",
+		mods = "CMD|SHIFT",
 		action = wezterm.action_callback(function(window, pane)
 			local success, stdout, stderr = wezterm.run_child_process({
 				"osascript",
@@ -281,13 +316,6 @@ config.keys = {
 		end),
 	},
 
-	-- ─── CONFIG RELOAD (cmd+ctrl+,) ──────────────────────────────────
-	{
-		key = ",",
-		mods = "CMD|CTRL",
-		action = act.ReloadConfiguration,
-	},
-
 	-- ─── ZOOM PANE ───────────────────────────────────────────────────
 	{
 		key = "z",
@@ -295,10 +323,10 @@ config.keys = {
 		action = act.TogglePaneZoomState,
 	},
 
-	-- ─── TAB RENAME (ctrl+cmd+r) ─────────────────────────────────────
+	-- ─── TAB RENAME (ctrl+cmd+h) ─────────────────────────────────────
 	{
-		key = "r",
-		mods = "CTRL|CMD",
+		key = "h",
+		mods = "SHIFT|CMD",
 		action = act.PromptInputLine({
 			description = "Enter new name for tab",
 			action = wezterm.action_callback(function(window, pane, line)
@@ -334,6 +362,17 @@ config.keys = {
 		}),
 	},
 
+	-- ─── UNCHECKED IDEAS (cmd+shift+m) ───────────────────────────────
+	-- Opens aggregated unchecked tasks from all daily notes
+	-- Auto-refreshes the list before opening
+	{
+		key = "m",
+		mods = "CMD|SHIFT",
+		action = act.SplitVertical({
+			args = { "/bin/zsh", "-l", "-c", os.getenv("HOME") .. "/obsidian-notes/open-unchecked-ideas.sh" },
+		}),
+	},
+
 	-- ─── THEME TOGGLE (cmd+shift+t) ─────────────────────────────────
 	-- Toggles dark/light mode for WezTerm (+ nvim picks it up via file watcher)
 	{
@@ -360,6 +399,27 @@ config.keys = {
 	},
 }
 
+-- ─── TAB LOCK INDICATOR ───────────────────────────────────────────
+-- Prepend lock icon to locked tab titles (uses string return to preserve theme colors)
+wezterm.on("format-tab-title", function(tab, tabs, panes, config, hover, max_width)
+	local title = tab.tab_title
+	if not title or #title == 0 then
+		title = tab.active_pane.title
+	end
+
+	local locked_tabs = wezterm.GLOBAL.locked_tabs or {}
+	local is_locked = locked_tabs[tostring(tab.tab_id)]
+	local lock_prefix = is_locked and (wezterm.nerdfonts.fa_lock .. " ") or ""
+
+	local available_width = max_width - 2 -- padding
+	if is_locked then
+		available_width = available_width - 2 -- lock icon + space
+	end
+	title = wezterm.truncate_right(title, available_width)
+
+	return " " .. lock_prefix .. title .. " "
+end)
+
 -- ─── COPY ON SELECT ────────────────────────────────────────────────
 config.selection_word_boundary = " \t\n{}[]()\"'`"
 
@@ -374,10 +434,11 @@ wezterm.on("update-status", function(window, pane)
 
 	-- Shortcut hints (Zellij-style)
 	local hints = {
-		{ key = "⌘F", label = "Split↓" },
-		{ key = "^⌘R", label = "RenameTab" },
-		{ key = "⇧⌘N", label = "DailyNote↓" },
-		{ key = "⇧⌘T", label = "Theme" },
+		{ key = "⌘⇧H", label = "RenameTab" },
+		{ key = "⌘⇧L", label = "Lock" },
+		{ key = "⌘⇧N", label = "DailyNote↓" },
+		{ key = "⌘⇧M", label = "Ideas↓" },
+		{ key = "⌘⇧T", label = "Theme" },
 	}
 
 	local h = theme.hints
