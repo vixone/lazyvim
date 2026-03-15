@@ -1,0 +1,511 @@
+#!/bin/bash
+set -euo pipefail
+
+# Constants
+STATE_DIR="$HOME/.local/state/wezterm"
+SESSIONS_DIR="$HOME/.config/wezterm/sessions"
+
+# Helper functions
+get_active_workspace() {
+    wezterm cli list --format json 2>/dev/null | python3 -c "import json,sys; data=json.load(sys.stdin); print(data[0]['workspace'] if data else 'default')" 2>/dev/null || echo "default"
+}
+
+get_active_workspaces() {
+    wezterm cli list --format json 2>/dev/null | python3 -c "import json,sys; data=json.load(sys.stdin); workspaces=sorted(set(p['workspace'] for p in data)); print('\n'.join(workspaces))" 2>/dev/null || echo ""
+}
+
+relative_time() {
+    local timestamp=$1
+    local now=$(date +%s)
+    local diff=$((now - timestamp))
+
+    if [[ $diff -lt 60 ]]; then
+        echo "just now"
+    elif [[ $diff -lt 3600 ]]; then
+        echo "$((diff / 60)) min ago"
+    elif [[ $diff -lt 86400 ]]; then
+        echo "$((diff / 3600)) hours ago"
+    else
+        echo "$((diff / 86400)) days ago"
+    fi
+}
+
+# Session subcommands
+session_create() {
+    local name="$1"
+
+    if [[ -z "$name" ]]; then
+        echo "Error: Session name required. Usage: wez-session create <name>" >&2
+        exit 1
+    fi
+
+    if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Error: Session name must contain only letters, numbers, dashes, and underscores" >&2
+        exit 1
+    fi
+
+    # Check if workspace already exists
+    local active_workspaces=$(get_active_workspaces)
+    if echo "$active_workspaces" | grep -q "^${name}$"; then
+        echo "Session '${name}' already exists."
+        exit 0
+    fi
+
+    # Create new workspace
+    wezterm cli spawn --new-window --workspace "$name" --cwd "$HOME" >/dev/null 2>&1
+    echo "Created session: ${name}"
+}
+
+session_list() {
+    # Try to get active workspaces (soft check - may fail if WezTerm not running)
+    local active_workspaces=$(get_active_workspaces 2>/dev/null || echo "")
+    local current_workspace=$(get_active_workspace 2>/dev/null || echo "default")
+
+    # Collect saved sessions from JSON files
+    local saved_sessions=""
+    if [[ -d "$SESSIONS_DIR" ]]; then
+        saved_sessions=$(find "$SESSIONS_DIR" -name "*.json" -exec basename {} .json \; 2>/dev/null | sort || echo "")
+    fi
+
+    # Merge active and saved (deduplicate)
+    local all_sessions=$(echo -e "${active_workspaces}\n${saved_sessions}" | sort -u | grep -v '^$' || echo "")
+
+    if [[ -z "$all_sessions" ]]; then
+        echo "No sessions found."
+        exit 0
+    fi
+
+    # Build session list with metadata
+    local session_data=()
+    while IFS= read -r name; do
+        [[ -z "$name" ]] && continue
+
+        local is_current=""
+        [[ "$name" == "$current_workspace" ]] && is_current="*"
+
+        local status="saved"
+        if echo "$active_workspaces" | grep -q "^${name}$"; then
+            status="active"
+        fi
+
+        local last_saved="-"
+        local json_file="$SESSIONS_DIR/${name}.json"
+        if [[ -f "$json_file" ]]; then
+            local timestamp=$(python3 -c "import json; data=json.load(open('$json_file')); print(data.get('last_saved', ''))" 2>/dev/null || echo "")
+            if [[ -n "$timestamp" ]]; then
+                last_saved=$(relative_time "$timestamp")
+            fi
+        fi
+
+        # Store as: current_marker|name|status|last_saved|sort_key
+        local sort_key=0
+        [[ "$name" == "$current_workspace" ]] && sort_key=1
+
+        session_data+=("${sort_key}|${is_current}|${name}|${status}|${last_saved}")
+    done <<< "$all_sessions"
+
+    # Sort: current first, then by name
+    IFS=$'\n' sorted=($(sort -t'|' -k1,1rn -k3,3 <<< "${session_data[*]}"))
+
+    # Print table header
+    printf "%-20s %-10s %s\n" "NAME" "STATUS" "LAST SAVED"
+
+    # Print sessions
+    for entry in "${sorted[@]}"; do
+        IFS='|' read -r _ marker name status last_saved <<< "$entry"
+        local display_name="${marker}${marker:+ }${name}"
+        printf "%-20s %-10s %s\n" "$display_name" "$status" "$last_saved"
+    done
+}
+
+session_save() {
+    local name="$1"
+
+    # If no name given, use current workspace
+    if [[ -z "$name" ]]; then
+        name=$(get_active_workspace)
+    fi
+
+    # Verify workspace exists
+    local active_workspaces=$(get_active_workspaces)
+    if ! echo "$active_workspaces" | grep -q "^${name}$"; then
+        echo "Error: Workspace '${name}' is not active. Can only save running workspaces." >&2
+        exit 1
+    fi
+
+    # Ensure sessions directory exists
+    mkdir -p "$SESSIONS_DIR"
+
+    # Capture workspace state and write JSON
+    local json_file="$SESSIONS_DIR/${name}.json"
+    local tmp_file="${json_file}.tmp"
+
+    wezterm cli list --format json | python3 -c "
+import json, sys, time
+
+data = json.load(sys.stdin)
+workspace = '${name}'
+panes = [p for p in data if p.get('workspace') == workspace]
+
+tabs = {}
+for p in panes:
+    tid = p['tab_id']
+    if tid not in tabs:
+        tabs[tid] = {'title': '', 'active': False, 'panes': []}
+
+    # Extract size safely
+    size = p.get('size', {})
+    if isinstance(size, dict):
+        width = size.get('cols', 80)
+        height = size.get('rows', 24)
+    else:
+        width = 80
+        height = 24
+
+    # Extract process from title
+    title = p.get('title', '')
+    process = title.split(' ')[0] if title else None
+
+    tabs[tid]['panes'].append({
+        'index': len(tabs[tid]['panes']),
+        'is_active': p.get('is_active_pane', False),
+        'cwd': p.get('cwd', ''),
+        'process': process,
+        'left': 0,
+        'top': 0,
+        'width': width,
+        'height': height,
+    })
+
+    if p.get('is_active_pane'):
+        tabs[tid]['active'] = True
+
+result = {
+    'version': 1,
+    'workspace': workspace,
+    'last_saved': int(time.time()),
+    'tabs': list(tabs.values()),
+}
+
+print(json.dumps(result, indent=2))
+" > "$tmp_file"
+
+    # Atomic write
+    mv "$tmp_file" "$json_file"
+    echo "Saved session: ${name}"
+}
+
+session_delete() {
+    local force=false
+    local name=""
+
+    # Parse flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--force)
+                force=true
+                shift
+                ;;
+            *)
+                name="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        echo "Error: Session name required. Usage: wez-session delete [-f] <name>" >&2
+        exit 1
+    fi
+
+    # Protect default workspace
+    if [[ "$name" == "default" ]]; then
+        echo "Cannot delete 'default' -- it's the fallback workspace." >&2
+        exit 1
+    fi
+
+    # Check if session exists
+    local json_file="$SESSIONS_DIR/${name}.json"
+    local active_workspaces=$(get_active_workspaces 2>/dev/null || echo "")
+    local is_active=false
+    local exists=false
+
+    if echo "$active_workspaces" | grep -q "^${name}$"; then
+        is_active=true
+        exists=true
+    fi
+
+    if [[ -f "$json_file" ]]; then
+        exists=true
+    fi
+
+    if [[ "$exists" == "false" ]]; then
+        echo "Error: Session '${name}' not found." >&2
+        exit 1
+    fi
+
+    # Confirmation prompt
+    if [[ "$force" == "false" ]]; then
+        read -p "Delete session '${name}'? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 130
+        fi
+    fi
+
+    # Remove JSON file
+    rm -f "$json_file"
+
+    # If workspace is active, close its panes
+    if [[ "$is_active" == "true" ]]; then
+        # Get all pane IDs for this workspace
+        local pane_ids=$(wezterm cli list --format json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+panes = [str(p['pane_id']) for p in data if p.get('workspace') == '${name}']
+print('\n'.join(panes))
+" 2>/dev/null || echo "")
+
+        # Close each pane
+        while IFS= read -r pane_id; do
+            [[ -z "$pane_id" ]] && continue
+            wezterm cli kill-pane --pane-id "$pane_id" >/dev/null 2>&1 || true
+        done <<< "$pane_ids"
+
+        # Brief pause for WezTerm to clean up workspace
+        sleep 0.5
+
+        # Determine fallback workspace
+        local fallback=$(get_active_workspace)
+        if [[ "$fallback" == "$name" ]] || [[ -z "$fallback" ]]; then
+            fallback="default"
+        fi
+
+        echo "Deleted session: ${name}"
+        echo "Switched to '${fallback}'."
+    else
+        echo "Deleted session: ${name}"
+    fi
+}
+
+session_attach() {
+    local name="$1"
+
+    if [[ -z "$name" ]]; then
+        echo "Error: Session name required. Usage: wez-session attach <name>" >&2
+        exit 1
+    fi
+
+    # Check if workspace is already running
+    local active_workspaces=$(get_active_workspaces)
+    if echo "$active_workspaces" | grep -q "^${name}$"; then
+        # Already running -- trigger workspace switch via user variable escape sequence
+        # WezTerm's user-var-changed event handler in wezterm.lua picks this up
+        # and performs SwitchToWorkspace, which works across windows
+        printf '\033]1337;SetUserVar=%s=%s\007' switch_workspace "$(echo -n "$name" | base64)"
+        echo "Attached to running session: ${name}"
+        return 0
+    fi
+
+    # Not running -- check if saved JSON exists
+    local json_file="$SESSIONS_DIR/${name}.json"
+    if [[ ! -f "$json_file" ]]; then
+        echo "Error: Session '${name}' not found (no active workspace, no saved state)" >&2
+        exit 1
+    fi
+
+    # Restore from JSON using CLI commands
+    echo "Restoring session '${name}' from saved state..."
+
+    # Parse JSON and restore tabs/panes
+    # Strategy: spawn new workspace, then create tabs and splits from JSON
+    local restore_result
+    restore_result=$(python3 -c "
+import json, subprocess, sys, os
+
+json_file = '$json_file'
+name = '${name}'
+home = os.path.expanduser('~')
+
+with open(json_file) as f:
+    layout = json.load(f)
+
+tabs = layout.get('tabs', [])
+if not tabs:
+    print('Error: No tabs in saved session', file=sys.stderr)
+    sys.exit(1)
+
+# Restorable processes (shells excluded -- they spawn by default)
+RESTORABLE = {
+    'nvim': 'nvim',
+    'claude': 'claude',
+    'npm': 'npm run dev',
+    'node': 'node',
+}
+
+def run_cmd(args, check=True):
+    \"\"\"Run a command and return stdout, or None on failure.\"\"\"
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        if check and result.returncode != 0:
+            return None
+        return result.stdout.strip()
+    except Exception as e:
+        print(f'Warning: Command failed: {args}: {e}', file=sys.stderr)
+        return None
+
+def get_cwd(pane_data):
+    \"\"\"Get CWD from pane data, falling back to home dir.\"\"\"
+    cwd = pane_data.get('cwd') or home
+    if not os.path.isdir(cwd):
+        print(f'Warning: CWD not found, using home: {cwd}', file=sys.stderr)
+        cwd = home
+    return cwd
+
+def infer_direction(prev_pane, curr_pane):
+    \"\"\"Infer split direction from geometry.\"\"\"
+    prev_left = prev_pane.get('left', 0)
+    prev_width = prev_pane.get('width', 80)
+    curr_left = curr_pane.get('left', 0)
+    if curr_left > prev_left + (prev_width / 2):
+        return '--right'
+    return '--bottom'
+
+def send_command(pane_id, process):
+    \"\"\"Send command to pane if process is restorable.\"\"\"
+    if not process:
+        return
+    # Skip shells
+    if process in ('zsh', 'bash', 'fish', 'sh', 'dash'):
+        return
+    cmd = RESTORABLE.get(process)
+    if cmd:
+        run_cmd(['wezterm', 'cli', 'send-text', '--pane-id', str(pane_id), '--no-paste', cmd + chr(10)], check=False)
+    else:
+        print(f'Skipped process restoration: {process}', file=sys.stderr)
+
+# Step 1: Create new workspace with first pane's CWD
+first_cwd = get_cwd(tabs[0]['panes'][0]) if tabs[0].get('panes') else home
+initial_pane_id = run_cmd(['wezterm', 'cli', 'spawn', '--new-window', '--workspace', name, '--cwd', first_cwd])
+
+if not initial_pane_id:
+    print('Error: Failed to create workspace', file=sys.stderr)
+    sys.exit(1)
+
+# Configure first pane (send command if needed)
+if tabs[0].get('panes'):
+    send_command(initial_pane_id, tabs[0]['panes'][0].get('process'))
+
+# Set tab title for first tab
+title = tabs[0].get('title', '')
+if title:
+    run_cmd(['wezterm', 'cli', 'set-tab-title', '--pane-id', initial_pane_id, title], check=False)
+
+# Step 2: Create remaining panes in first tab
+if tabs[0].get('panes') and len(tabs[0]['panes']) > 1:
+    panes = tabs[0]['panes']
+    for i in range(1, len(panes)):
+        direction = infer_direction(panes[i-1], panes[i])
+        cwd = get_cwd(panes[i])
+        new_pane_id = run_cmd(['wezterm', 'cli', 'split-pane', direction, '--pane-id', initial_pane_id, '--cwd', cwd])
+        if new_pane_id:
+            send_command(new_pane_id, panes[i].get('process'))
+        else:
+            print(f'Warning: Failed to create pane {i} in tab 1', file=sys.stderr)
+        if i > 4:
+            print(f'Warning: Layout accuracy may degrade beyond 4 panes', file=sys.stderr)
+
+# Step 3: Create additional tabs
+for tab_idx in range(1, len(tabs)):
+    tab_data = tabs[tab_idx]
+    panes = tab_data.get('panes', [])
+    if not panes:
+        continue
+
+    first_cwd = get_cwd(panes[0])
+    tab_pane_id = run_cmd(['wezterm', 'cli', 'spawn', '--pane-id', initial_pane_id, '--cwd', first_cwd])
+
+    if not tab_pane_id:
+        print(f'Warning: Failed to create tab {tab_idx + 1}', file=sys.stderr)
+        continue
+
+    # Send command to first pane
+    send_command(tab_pane_id, panes[0].get('process'))
+
+    # Set tab title
+    title = tab_data.get('title', '')
+    if title:
+        run_cmd(['wezterm', 'cli', 'set-tab-title', '--pane-id', tab_pane_id, title], check=False)
+
+    # Create splits for remaining panes
+    for i in range(1, len(panes)):
+        direction = infer_direction(panes[i-1], panes[i])
+        cwd = get_cwd(panes[i])
+        new_pane_id = run_cmd(['wezterm', 'cli', 'split-pane', direction, '--pane-id', tab_pane_id, '--cwd', cwd])
+        if new_pane_id:
+            send_command(new_pane_id, panes[i].get('process'))
+        else:
+            print(f'Warning: Failed to create pane {i} in tab {tab_idx + 1}', file=sys.stderr)
+
+print(f'Restored {len(tabs)} tab(s) from saved state')
+" 2>&1)
+
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        echo "Error: Restoration failed" >&2
+        echo "$restore_result" >&2
+        exit 1
+    fi
+
+    echo "$restore_result"
+    echo "Restored session: ${name}"
+}
+
+# Main command routing
+main() {
+    if [[ $# -eq 0 ]]; then
+        cat <<EOF
+Usage: wez-session <command> [options]
+
+Session commands:
+  create <name>         Create a new named session
+  attach <name>         Attach to session (restore if not running)
+  list                  List all sessions with status
+  save [name]           Save workspace state (default: current)
+  delete [-f] <name>    Delete a session (with confirmation)
+
+Options:
+  -h, --help            Show this help message
+EOF
+        return 0
+    fi
+
+    case "$1" in
+        create)
+            session_create "${2:-}"
+            ;;
+        list)
+            session_list
+            ;;
+        save)
+            session_save "${2:-}"
+            ;;
+        delete)
+            shift
+            session_delete "$@"
+            ;;
+        attach)
+            session_attach "${2:-}"
+            ;;
+        --help|-h|help)
+            main
+            ;;
+        *)
+            echo "Unknown command: $1" >&2
+            echo "Run 'wez-session --help' for usage." >&2
+            return 1
+            ;;
+    esac
+}
+
+main "$@"

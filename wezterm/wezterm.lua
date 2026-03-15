@@ -5,11 +5,23 @@
 local wezterm = require("wezterm")
 local act = wezterm.action
 local smart_splits = wezterm.plugin.require("https://github.com/mrjones2014/smart-splits.nvim")
+local session_ok, session = pcall(require, "lua.session")
+if not session_ok then
+	session = { apply_to_config = function() end }
+end
 local config = {}
 
 if wezterm.config_builder then
 	config = wezterm.config_builder()
 end
+
+-- ─── SESSION MANAGER ──────────────────────────────────────────────
+-- Set to false to disable session management (workspaces, picker, auto-save)
+local session_manager = {
+	enabled = true,
+}
+
+session.apply_to_config(config, session_manager)
 
 -- ─── THEME MODE ───────────────────────────────────────────────────
 -- Reads ~/.config/wezterm/theme-mode ("dark" or "light")
@@ -134,6 +146,7 @@ config.window_background_opacity = 0.93
 config.macos_window_background_blur = 20
 
 config.window_decorations = "RESIZE"
+config.automatically_reload_config = true
 config.enable_scroll_bar = false
 config.use_fancy_tab_bar = false
 config.hide_tab_bar_if_only_one_tab = false
@@ -397,6 +410,16 @@ config.keys = {
 			wezterm.run_child_process({ "/usr/bin/touch", wezterm.config_file })
 		end),
 	},
+
+	-- Session picker (cmd+ctrl+s) -- fuzzy search overlay for instant session switching
+	{
+		key = "s",
+		mods = "CMD|CTRL",
+		action = wezterm.action_callback(function(window, pane)
+			local picker = require("lua.session.picker")
+			picker.show_picker(window, pane)
+		end),
+	},
 }
 
 -- ─── TAB LOCK INDICATOR ───────────────────────────────────────────
@@ -422,23 +445,27 @@ end)
 
 -- ─── COPY ON SELECT ────────────────────────────────────────────────
 config.selection_word_boundary = " \t\n{}[]()\"'`"
+-- Copy selection to clipboard on mouse-up (replaces update-status polling that caused resize jitter)
+config.mouse_bindings = {
+	{
+		event = { Up = { streak = 1, button = "Left" } },
+		mods = "NONE",
+		action = act.CompleteSelection("Clipboard"),
+	},
+}
 
--- Automatically copy selection to clipboard (like kitty's copy_on_select)
--- + Zellij-style shortcut hints in the tab bar
-wezterm.on("update-status", function(window, pane)
-	-- Copy on select
-	local sel = window:get_selection_text_for_pane(pane)
-	if sel and sel ~= "" then
-		window:copy_to_clipboard(sel, "Clipboard")
-	end
+-- ─── SESSION STATE ────────────────────────────────────────────────
+wezterm.GLOBAL.deleted_sessions = wezterm.GLOBAL.deleted_sessions or {}
 
-	-- Shortcut hints (Zellij-style)
+-- Pre-build static hint elements (computed once per config load)
+local function build_status_string()
 	local hints = {
-		{ key = "⌘⇧H", label = "RenameTab" },
+		{ key = "⌘⇧H", label = "Rename" },
 		{ key = "⌘⇧L", label = "Lock" },
-		{ key = "⌘⇧N", label = "DailyNote↓" },
+		{ key = "⌘⇧N", label = "Note↓" },
 		{ key = "⌘⇧M", label = "Ideas↓" },
 		{ key = "⌘⇧T", label = "Theme" },
+		{ key = "⌃⌘S", label = "Sess" },
 	}
 
 	local h = theme.hints
@@ -454,8 +481,68 @@ wezterm.on("update-status", function(window, pane)
 		table.insert(elements, { Text = " " .. hint.label })
 	end
 
-	window:set_right_status(wezterm.format(elements))
+	return wezterm.format(elements)
+end
+
+-- Set right_status once per config load, then exit immediately on all subsequent calls.
+-- Local flag resets on each config load (GLOBAL survives process lifetime).
+local status_initialized = false
+wezterm.on("update-status", function(window, pane)
+	if status_initialized then
+		return
+	end
+	window:set_right_status(build_status_string())
+	status_initialized = true
 end)
+
+-- ─── DEFAULT WORKSPACE BOOTSTRAP (one-shot, outside update-status) ───
+-- Keep update-status render-only so manual resize remains smooth.
+wezterm.GLOBAL.workspace_bootstrapped = wezterm.GLOBAL.workspace_bootstrapped or false
+if session_manager.enabled and not wezterm.GLOBAL.workspace_bootstrapped then
+	wezterm.GLOBAL.workspace_bootstrapped = true
+	wezterm.time.call_after(0.1, function()
+		if wezterm.mux.get_active_workspace() ~= "default" then
+			return
+		end
+
+		-- Check if "main" workspace is already running in mux
+		local has_main = false
+		for _, w in ipairs(wezterm.mux.all_windows()) do
+			if w:get_workspace() == "main" then
+				has_main = true
+				break
+			end
+		end
+
+		if has_main then
+			-- "main" already exists; avoid workspace mutation during resize path.
+			return
+		else
+			-- "main" not running: rename "default" to "main" (preserves all current tabs)
+			wezterm.mux.rename_workspace("default", "main")
+		end
+	end)
+end
+
+-- ─── WORKSPACE SWITCH (triggered by CLI: wez-session attach) ─────
+-- CLI sends escape sequence to set user var, we react by switching workspace
+wezterm.on("user-var-changed", function(window, pane, name, value)
+	if name == "switch_workspace" and value ~= "" then
+		window:perform_action(act.SwitchToWorkspace({ name = value }), pane)
+	end
+end)
+
+-- ─── AUTO-SAVE (standalone timer, not in update-status to avoid resize jitter) ───
+if session_manager.enabled then
+	local function auto_save_loop()
+		local ok, err = pcall(session.state.save_current_workspace)
+		if not ok then
+			wezterm.log_error("auto-save failed: " .. tostring(err))
+		end
+		wezterm.time.call_after(2, auto_save_loop)
+	end
+	wezterm.time.call_after(2, auto_save_loop)
+end
 
 -- ─── SMART SPLITS (seamless vim/wezterm pane navigation) ─────────
 -- Ctrl+hjkl navigates between both neovim splits AND wezterm panes
